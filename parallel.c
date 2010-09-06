@@ -3,56 +3,85 @@
  * Released in the public domain.
  * $Id: parallel.c,v 1.9 2004/03/23 15:04:32 berke Exp $ */
 
+#define _GNU_SOURCE
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/io.h>
 #include <time.h>
+#include <comedilib.h>
 #include <unistd.h>
 #include <ctype.h>
 #include <string.h>
+#include <stdbool.h>
 
-#define LP 0x378
+#define DIO0SUBDEV 2
 
-static int tau = 1;
-
-static inline void microsleep(void)
+enum
 {
-  inb(LP);
-}
+  AVR_MOSI_BIT         = 0,
+  AVR_SCLK_BIT         = 1,
+  AVR_RST_BIT          = 2,
+  AVR_FIRST_OUTPUT_BIT = AVR_MOSI_BIT,
+  AVR_LAST_OUTPUT_BIT  = AVR_RST_BIT,
+
+  AVR_MISO_BIT         = 3,
+  AVR_FIRST_INPUT_BIT  = AVR_MISO_BIT,
+  AVR_LAST_INPUT_BIT   = AVR_MISO_BIT
+};
+
+#define AVR_MOSI     (1 << AVR_MOSI_BIT)
+#define AVR_SCLK     (1 << AVR_SCLK_BIT)
+#define AVR_RST      (1 << AVR_RST_BIT)
+#define AVR_OUTBITS  (AVR_MOSI|AVR_SCLK|AVR_RST)
+#define AVR_MISO     (1 << AVR_MISO_BIT)
+#define AVR_INBITS   (AVR_MISO)
+
+static comedi_t *dev;
 
 static inline void udelay(int t_us)
 {
-  int i;
-  for(i = 0; i<tau * t_us; i++) {
-    microsleep();
-  }
-  /*usleep(t_us);*/
+  struct timespec ts;
+
+  ts.tv_sec = t_us / 1000000;
+  ts.tv_nsec = (t_us % 1000000) * 1000;
+  nanosleep(&ts, NULL);
 }
 
-#define DATI 0x80
-/* #define PWR 0x08 */
-#define PWR 0x00
-#define DATO 0x04
-#define PUL 0x02
-#define CTR 0x01
+static inline void retard(void)
+{
+  udelay(100);
+}
 
-#define outb(x,y) outb(0xff^(x),(y))
+void tx(unsigned char x0)
+{
+  unsigned int x;
 
-#define AVR_MISO 0x01
-#define AVR_MOSI 0x01
-#define AVR_SCLK 0x02
-#define AVR_RST  0x04
-#define AVR_OUTBITS AVR_MOSI|AVR_SCLK|AVR_RST
-#define AVR_INBITS AVR_MISO
+  x = x0;
+  comedi_dio_bitfield2(dev, DIO0SUBDEV, AVR_OUTBITS, &x, AVR_FIRST_OUTPUT_BIT);
+  /*printf(">> 0x%02x\n", x);*/
+}
+
+bool rx_miso(void)
+{
+  unsigned int x;
+  if(comedi_dio_read(dev, DIO0SUBDEV, AVR_MISO_BIT, &x) < 0)
+  {
+    printf("Bit read error\n");
+    abort();
+  }
+  /*printf("<< %u\n", x);*/
+  return x == 1;
+}
 
 void monitor(void)
 {
   unsigned char c0,c1;
-  outb(0x80,LP);
+  //outb(0x80,LP);
   c0 = 0;
   c1 = 0;
   for(;;) {
-    c1 = inb(LP + 1);
+    c1 = rx_miso();
     if(c0 != c1) {
       printf("0x%02x\n", c1);
       c0 = c1;
@@ -62,7 +91,7 @@ void monitor(void)
 
 void capture(char *fn)
 {
-  unsigned char c;
+  bool c;
   signed short buffer[4096];
   int i;
   FILE *f;
@@ -73,11 +102,11 @@ void capture(char *fn)
     return;
   }
 
-  outb(0x80,LP);
+  //outb(0x80,LP);
   i = 0;
   for(;;){
-    c = inb(LP + 1);
-    buffer[i] = (c & 0x80) ? -32768 : 32767;
+    c = rx_miso();
+    buffer[i] = c ? -32768 : 32767;
     i ++;
     if(i == sizeof(buffer)) {
       i = 0;
@@ -91,10 +120,10 @@ void capture(char *fn)
 
 unsigned char avr_rxtx(unsigned char x)
 {
-  unsigned char c;
-  outb(x & 7, LP);
-  microsleep();
-  c = !!(0x80 & inb(LP + 1));
+  bool c;
+  tx(x & 7);
+  retard();
+  c = rx_miso();
   /* printf("T(0x%02x) R(%d)\n", x, c); */
   return c;
 }
@@ -112,9 +141,9 @@ static inline void sas_send_nibble(int tau, unsigned char x)
 
   xor = 0x00;
   for(i = 0; i < 4; i++) {
-    outb(xor ^ (AVR_RST|((x & 1)?AVR_MOSI:0)), LP);
+    tx(xor ^ (AVR_RST|((x & 1)?AVR_MOSI:0)));
     udelay(tau);
-    outb(xor ^ (AVR_RST|((x & 1)?AVR_MOSI|AVR_SCLK:AVR_SCLK)), LP);
+    tx(xor ^ (AVR_RST|((x & 1)?AVR_MOSI|AVR_SCLK:AVR_SCLK)));
     udelay(tau);
     /* printf("%c",x&1?'1':'0'); fflush(stdout); */
     x >>= 1;
@@ -127,12 +156,12 @@ void prototran(int tau, unsigned long x)
   unsigned long y;
   int i;
   unsigned char c; /* check byte */
-  int ack1,ack2;
+  bool ack1,ack2;
   int retries;
 
   c = - ((x & 0xff) + ((x >> 8) & 0xff) + ((x >> 16) & 0xff) + ((x >> 24) & 0xff));
 
-  ack1 = !!(0x80 & inb(LP + 1));
+  ack1 = rx_miso();
   for(retries = 0; retries < 500; retries ++) {
     printf("Sending 0x%06lx...\n", x);
 
@@ -149,7 +178,7 @@ void prototran(int tau, unsigned long x)
       y >>= 1;
     }
     sas_send_nibble(tau, SAS_STOP);
-    ack2 = !!(0x80 & inb(LP + 1));
+    ack2 = rx_miso();
     if(ack1 != ack2) {
       printf("Command acknowledged.\n");
       break;
@@ -158,7 +187,7 @@ void prototran(int tau, unsigned long x)
   if(retries == 500) {
     printf("ERROR: Command not acknowledged after %d attempts (%d,%d).\n", ack1, ack2, retries);
   }
-  outb(AVR_RST, LP);
+  tx(AVR_RST);
 }
 /* Power-up sequence */
 
@@ -576,12 +605,25 @@ int main(int argc, char **argv)
     exit(EXIT_FAILURE);
   }
 
-  if(ioperm(LP, 3, 1)) {
-    perror("ioperm");
-    exit(EXIT_FAILURE);
+  cmd = argv[1];
+
+  dev = comedi_open("/dev/comedi0");
+
+  for(n = AVR_FIRST_OUTPUT_BIT; n <= AVR_LAST_OUTPUT_BIT; n ++)
+  {
+    if(comedi_dio_config(dev, DIO0SUBDEV, n, COMEDI_OUTPUT) < 0) {
+      printf("Can't configure digital output bit %d\n", n);
+      abort();
+    }
   }
 
-  cmd = argv[1];
+  for(n = AVR_FIRST_INPUT_BIT; n <= AVR_LAST_INPUT_BIT; n ++)
+  {
+    if(comedi_dio_config(dev, DIO0SUBDEV, n, COMEDI_INPUT) < 0) {
+      printf("Can't configure digital input bit %d\n", n);
+      abort();
+    }
+  }
 
   if(!strcmp(cmd,"prototran")) {
     int tau;
@@ -595,17 +637,17 @@ int main(int argc, char **argv)
       exit(EXIT_FAILURE);
     }
   } else if(!strcmp(cmd,"powerup")) {
-    outb(AVR_RST, LP);
+    tx(AVR_RST);
   } else if(!strcmp(cmd,"set")) {
-    outb(atoi(argv[2]), LP);
+    tx(atoi(argv[2]));
   } else if(!strcmp(cmd,"monitor")) {
     monitor();
   } else if(!strcmp(cmd,"capture")) {
     capture(argv[2]);
   } else if(!strcmp(cmd,"reset")) {
-    outb(0, LP);
+    tx(0);
     udelay(1000000);
-    outb(AVR_RST, LP);
+    tx(AVR_RST);
   } else if(!strcmp(cmd,"ihexchk")) {
     fn = argv[2];
     n = intelhex_load(fn, flash, sizeof(flash));
