@@ -50,7 +50,7 @@ static inline void udelay(int t_us)
 
 static inline void retard(void)
 {
-  udelay(100);
+  udelay(1);
 }
 
 void tx(unsigned char x0)
