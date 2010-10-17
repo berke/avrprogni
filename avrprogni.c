@@ -1,7 +1,6 @@
-/* Atmel AT90S1200 programmer
- * Copyright (C)2004 Berke Durak
- * Released in the public domain.
- * $Id: parallel.c,v 1.9 2004/03/23 15:04:32 berke Exp $ */
+/* Atmel AVR programmer
+ * Copyright (C)2004-2010 Berke Durak
+ * Released in the public domain. */
 
 #define _GNU_SOURCE
 

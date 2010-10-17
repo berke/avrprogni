@@ -1,7 +1,9 @@
+.PHONY: clean
+
 CFLAGS=-Wall -O3 -g
 
-paravr:	parallel.c
-	$(CC) $(CFLAGS) -o paravr -lm -lcomedi $<
+avrprogni:	avrprogni.c
+	$(CC) $(CFLAGS) -o avrprogni -lm -lcomedi $<
 
 clean:
-	rm -f paravr
+	rm -f avrprogni
