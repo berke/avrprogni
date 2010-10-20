@@ -381,16 +381,25 @@ unsigned short avr_read_lock_bits(FILE *out)
   unsigned char l;
 
   l = avr_talk(0x98, 0x00, 0x00, 0x00) & 0x3f;
-  fprintf(out, "Lock byte: 0x%02x\n", l);
+  fprintf(out, "Read lock bits: 0x%02x\n", l);
   return 1;
 }
+
+unsigned short avr_write_lock_bits(FILE *out, unsigned char l)
+{
+  printf("Writing lock bits 0x%02x\n", l);
+  avr_talk(0xac, 0xe0, 0x00, 0xc0 | l);
+  fprintf(out, "Wrote lock bits: 0x%02x\n", l);
+  return 1;
+}
+
 unsigned short avr_read_fuse_bits(FILE *out)
 {
   unsigned char f_lo,f_hi;
 
   f_lo = avr_talk(0x50, 0x00, 0x00, 0x00) & 0xff;
   f_hi = avr_talk(0x58, 0x08, 0x00, 0x00) & 0xff;
-  fprintf(out, "Fuse bytes: hi=0x%02x lo=0x%02x\n", f_hi, f_lo);
+  fprintf(out, "Read fuse bytes: hi=0x%02x lo=0x%02x\n", f_hi, f_lo);
   return 1;
 }
 
@@ -664,11 +673,18 @@ int main(int argc, char **argv)
         avr_read_fuse_bits(stdout);
       } else if(!strcmp(cmd,"readlock")) {
         avr_read_lock_bits(stdout);
+      } else if(!strcmp(cmd,"writelock")) {
+        if(argc != 3)
+        {
+          fprintf(stderr,"usage: avrprogni writelock <lock>\n");
+          exit(1);
+        }
+        avr_write_lock_bits(stdout, strtol(argv[2], 0, 0));
       } else if(!strcmp(cmd,"writefuse")) {
         unsigned char f_hi;
         unsigned char f_lo;
         if (argc != 4) {
-          fprintf(stderr,"usage: paravr writefuse <fuse_hi> <fuse_lo>\n");
+          fprintf(stderr,"usage: avrprogni writefuse <fuse_hi> <fuse_lo>\n");
           exit(1);
         }
         f_hi = strtol(argv[2], 0, 0);
@@ -693,7 +709,7 @@ int main(int argc, char **argv)
         printf("Loaded %d bytes.\n", n);
         avr_program_mega8(flash, n, 32, 1);
       } else {
-        printf("unknown operation %s\n", argv[4]);
+        printf("Unknown operation %s\n", argv[4]);
       }
     }
   }
