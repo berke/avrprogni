@@ -47,9 +47,18 @@ static inline void udelay(int t_us)
   nanosleep(&ts, NULL);
 }
 
+static inline void ndelay(int ns)
+{
+  struct timespec ts;
+
+  ts.tv_sec = 0;
+  ts.tv_nsec = ns;
+  nanosleep(&ts, NULL);
+}
+
 static inline void retard(void)
 {
-  udelay(1);
+  ndelay(1);
 }
 
 void tx(unsigned char x0)
@@ -121,7 +130,7 @@ unsigned char avr_rxtx(unsigned char x)
 {
   bool c;
   tx(x & 7);
-  retard();
+  //retard();
   c = rx_miso();
   /* printf("T(0x%02x) R(%d)\n", x, c); */
   return c;
@@ -205,80 +214,21 @@ void avr_powerup(void) /* with XTAL */
   udelay(20000);
 }
 
-unsigned short avr_talk(unsigned char u1, unsigned char u2, unsigned char u3, unsigned char u4)
+unsigned short avr_byte(unsigned char x, unsigned char z, unsigned short res)
 {
-  int i;
-  unsigned char x,z;
-  unsigned short res;
-
-  /* printf("talk %02x %02x %02x %02x\n", u1, u2, u3, u4); */
-  res = 0;
-  x = u1;
+  unsigned i;
 
   for(i = 0; i<8; i++) {
     if(x & 0x80) {
       (void) avr_rxtx(AVR_MOSI);
-      udelay(3);
-      (void) avr_rxtx(AVR_MOSI|AVR_SCLK);
-      udelay(3);
-    } else {
-      (void) avr_rxtx(0);
-      udelay(3);
-      (void) avr_rxtx(AVR_SCLK);
-      udelay(3);
-    }
-    x = (x << 1) & 0xff;
-  }
-  (void) avr_rxtx(0);
-
-  x = u2;
-  for(i = 0; i<8; i++) {
-    if(x & 0x80) {
-      (void) avr_rxtx(AVR_MOSI);
-      udelay(3);
+      //udelay(3);
       z = avr_rxtx(AVR_MOSI|AVR_SCLK);
-      udelay(3);
+      //udelay(3);
     } else {
       (void) avr_rxtx(0);
-      udelay(3);
+      //udelay(3);
       z = avr_rxtx(AVR_SCLK);
-      udelay(3);
-    }
-    res <<= 1;
-    if(z) res|=1;
-    x = (x << 1) & 0xff;
-  }
-  (void) avr_rxtx(0);
-
-  x = u3;
-  for(i = 0; i<8; i++) {
-    if(x & 0x80) {
-      (void) avr_rxtx(AVR_MOSI);
-      udelay(3);
-      (void) avr_rxtx(AVR_MOSI|AVR_SCLK);
-      udelay(3);
-    } else {
-      (void) avr_rxtx(0);
-      udelay(3);
-      (void) avr_rxtx(AVR_SCLK);
-      udelay(3);
-    }
-    x = (x << 1) & 0xff;
-  }
-  (void) avr_rxtx(0);
-
-  x = u4;
-  for(i = 0; i<8; i++) {
-    if(x & 0x80) {
-      (void) avr_rxtx(AVR_MOSI);
-      udelay(3);
-      z = avr_rxtx(AVR_MOSI|AVR_SCLK);
-      udelay(3);
-    } else {
-      (void) avr_rxtx(0);
-      udelay(3);
-      z = avr_rxtx(AVR_SCLK);
-      udelay(3);
+      //udelay(3);
     }
     res <<= 1;
     if (z) res |= 1;
@@ -286,6 +236,19 @@ unsigned short avr_talk(unsigned char u1, unsigned char u2, unsigned char u3, un
   }
   (void) avr_rxtx(0);
 
+  return res;
+}
+
+unsigned short avr_talk(unsigned char u1, unsigned char u2, unsigned char u3, unsigned char u4)
+{
+  unsigned short res;
+
+  /* printf("talk %02x %02x %02x %02x\n", u1, u2, u3, u4); */
+  res = 0;
+  avr_byte(u1,0,0);
+  res = avr_byte(u2,0,res);
+  avr_byte(u3,0,0);
+  res = avr_byte(u4,0,res);
   return res;
 }
 
@@ -346,7 +309,7 @@ int avr_write_program_memory(int addr, unsigned short data)
 
   (void) avr_talk(0x40, 0xff & (addr >> 8), addr & 0xff, data & 0x00ff);
   for(attempts = 0; attempts < GIVE_UP; attempts ++) {
-    udelay(5000);
+    //udelay(5000);
     res = avr_talk(0x20, 0xff & (addr >> 8), addr & 0xff, 0x00);
     if((res & 0xff) == (data & 0xff)) break;
   }
@@ -357,7 +320,7 @@ int avr_write_program_memory(int addr, unsigned short data)
 
   (void) avr_talk(0x48, 0xff & (addr >> 8), addr & 0xff, (data >> 8) & 0x00ff);
   for(attempts = 0; attempts < GIVE_UP; attempts ++) {
-    udelay(5000);
+    //udelay(5000);
     res = avr_talk(0x28, 0xff & (addr >> 8), addr & 0xff, 0x00);
     if((res & 0xff) == ((data >> 8) & 0xff)) break;
   }
@@ -429,7 +392,7 @@ void avr_program1200(unsigned char *flash, int length, int verify) /* must have 
 }
 
 /* program length is in BYTES */
-void avr_program_mega8(unsigned char *flash, int length, int page_size, int verify) /* must have been powered-up */
+int avr_program_mega8(unsigned char *flash, int length, int page_size, int verify) /* must have been powered-up */
 {
   int i, j;
   int pages;
@@ -440,6 +403,7 @@ void avr_program_mega8(unsigned char *flash, int length, int page_size, int veri
   int okay;
   unsigned char x1, x2;
   unsigned char y1, y2;
+  int not_ff;
 
   length = length / 2;
   pages = (length + page_size - 1) / page_size;
@@ -455,6 +419,7 @@ void avr_program_mega8(unsigned char *flash, int length, int page_size, int veri
         j, this_length, j * page_size, (j + 1) * page_size - 1);
     fflush(stdout);
 
+    not_ff = -1;
 
     for(i = 0; i < this_length; i++) {
       byte_index = 2 * (page_size * j + i);
@@ -463,19 +428,44 @@ void avr_program_mega8(unsigned char *flash, int length, int page_size, int veri
 
       /* low byte first */
       x = flash[byte_index];
+      if(x != 0xff) not_ff = byte_index;
       (void) avr_talk(0x40, 0x00, i, x);
 
       x = flash[byte_index + 1];
+      if(x != 0xff) not_ff = byte_index + 1;
       (void) avr_talk(0x48, 0x00, i, x);
+    }
+
+    if(not_ff < 0) {
+      printf("\nSkipping page %d (all-FF).\n", j);
+      continue;
     }
 
     /* write page */
     printf("\nWriting page %d.\n", j);
     (void) avr_talk(0x4c, j >> 3, (j & 7) << 5, 0x00);
 
+    /* poll */
+    for(tries = 0; tries < 10000; tries ++)
+    {
+      udelay(10);
+      if(not_ff & 1)
+        x1 = avr_talk(0x28, 0xff & (not_ff >> 9), (not_ff >> 1) & 0xff, 0x00);
+      else
+        x1 = avr_talk(0x20, 0xff & (not_ff >> 9), (not_ff >> 1) & 0xff, 0x00);
+
+      if(flash[not_ff] == x1) break;
+    }
+    if(tries == 10000)
+    {
+      printf("ERROR: Polling failed after 1000 tries, not_ff=%d 0x%02x got 0x%02x.\n", not_ff, flash[not_ff], x1);
+      return 0;
+    }
+
+    printf("Verifying...\n");
     /* poll/verify */
-    for(tries = 0; tries < 1000; tries ++) {
-      udelay(4500);
+    do {
+      udelay(1);
       okay = 1;
       for(i = 0; i < this_length; i ++) {
         byte_index = 2 * (page_size * j + i);
@@ -483,27 +473,20 @@ void avr_program_mega8(unsigned char *flash, int length, int page_size, int veri
         x2 = avr_talk(0x20, 0xff & (byte_index >> 9), (byte_index >> 1) & 0xff, 0x00);
 
         if(x1 != x2) {
-          printf("At index %d byte 0x%02x reads back as 0x%02x.\n", byte_index, x1, x2);
-          okay = 0; break;
+          printf("ERROR: At index %d byte 0x%02x reads back as 0x%02x.\n", byte_index, x1, x2);
+          return 0;
         }
         byte_index ++;
         y1 = flash[byte_index];
         y2 = avr_talk(0x28, 0xff & (byte_index >> 9), (byte_index >> 1) & 0xff, 0x00);
         if(y1 != y2) {
-          printf("At index %d byte 0x%02x reads back as 0x%02x.\n", byte_index, y1, y2);
-          okay = 0; break;
+          printf("ERROR: At index %d byte 0x%02x reads back as 0x%02x.\n", byte_index, y1, y2);
+          return 0;
         }
       }
-      if(okay) break;
-    }
-    if(tries == 1000) {
-      printf("Error: can't write page %d.\n", j);
-      break;
-    } else {
-      printf("Page %d okay.\n", j);
-    }
+    } while(0);
   }
-  return;
+  return 1;
 }
 
 int intelhex_load(char *fn, unsigned char *flash, int m)
