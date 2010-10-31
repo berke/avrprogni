@@ -405,36 +405,37 @@ int avr_program_mega8(unsigned char *flash, int length, int page_size, int verif
   unsigned char y1, y2;
   int not_ff;
 
-  length = length / 2;
+  length = (length + 1) / 2; /* length in words */
   pages = (length + page_size - 1) / page_size;
-  printf("Code length is %d (0x%x) words(s), %d page(s).\n", length, length, pages);
+  printf("Code length is %d (0x%x) words(s), %d page(s) of %d words.\n", length, length, pages, page_size);
 
   for(j = 0; j < pages; j ++) {
-    if(j == pages - 1) {
-      this_length = (length % page_size) + 1;
-    } else {
-      this_length = page_size;
-    }
+    this_length = page_size;
     printf("\nProgramming page %d : %d words (words 0x%04x to 0x%04x):\n",
         j, this_length, j * page_size, (j + 1) * page_size - 1);
     fflush(stdout);
 
     not_ff = -1;
 
+    printf("%04x:", 2 * page_size * j);
+
     for(i = 0; i < this_length; i++) {
       byte_index = 2 * (page_size * j + i);
-      printf("\rProgramming byte : 0x%04x (byte 0x%02x of page %d)",
-                byte_index, 2 * i, j); fflush(stdout);
+      /*printf("\rProgramming byte : 0x%04x (byte 0x%02x of page %d)",
+                byte_index, 2 * i, j); fflush(stdout);*/
 
       /* low byte first */
       x = flash[byte_index];
+      printf("%02x", x);
       if(x != 0xff) not_ff = byte_index;
       (void) avr_talk(0x40, 0x00, i, x);
 
       x = flash[byte_index + 1];
+      printf("%02x", x);
       if(x != 0xff) not_ff = byte_index + 1;
       (void) avr_talk(0x48, 0x00, i, x);
     }
+    printf("\n");
 
     if(not_ff < 0) {
       printf("\nSkipping page %d (all-FF).\n", j);
@@ -462,7 +463,7 @@ int avr_program_mega8(unsigned char *flash, int length, int page_size, int verif
       return 0;
     }
 
-    printf("Verifying...\n");
+    printf("Verifying: ");
     /* poll/verify */
     do {
       udelay(1);
@@ -485,6 +486,7 @@ int avr_program_mega8(unsigned char *flash, int length, int page_size, int verif
         }
       }
     } while(0);
+    printf("OK.\n");
   }
   return 1;
 }
@@ -588,8 +590,10 @@ void avr_dump_signature(FILE *f)
 int main(int argc, char **argv)
 {
   char *fn, *cmd;
-  unsigned char flash[8192];
+  static unsigned char flash[8192];
   int n;
+
+  memset(flash, 0xff, sizeof(flash));
 
   if(argc < 2) {
     fprintf(stderr, "usage: %s command...\n", argv[0]);
@@ -642,7 +646,7 @@ int main(int argc, char **argv)
   } else if(!strcmp(cmd,"ihexchk")) {
     fn = argv[2];
     n = intelhex_load(fn, flash, sizeof(flash));
-    printf("Loaded %d bytes.\n", n);
+    printf("Loaded %d (0x%04x) bytes.\n", n, n);
   } else {
     avr_powerup();
     if(avr_programming_enable()) {
@@ -689,7 +693,7 @@ int main(int argc, char **argv)
         if(n < 0) {
           exit(EXIT_FAILURE);
         }
-        printf("Loaded %d bytes.\n", n);
+        printf("Loaded %d (0x%04x) bytes.\n", n, n);
         avr_program_mega8(flash, n, 32, 1);
       } else {
         printf("Unknown operation %s\n", argv[4]);
