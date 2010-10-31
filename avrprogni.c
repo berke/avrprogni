@@ -335,7 +335,9 @@ unsigned short avr_write_fuse_bits(unsigned char f_hi, unsigned char f_lo)
 {
   printf("Writing fuse bytes: hi=0x%02x lo=0x%02x\n", f_hi, f_lo);
   (void) avr_talk(0xac, 0xa0, 0x00, f_lo);
+  udelay(5000);
   (void) avr_talk(0xac, 0xa8, 0x00, f_hi);
+  udelay(5000);
   return 1;
 }
 
@@ -509,7 +511,6 @@ int intelhex_load(char *fn, unsigned char *flash, int m)
     return -1;
   }
 
-  memset(flash, 0, m);
   n = 0;
   for(;;) {
     if(fgets(line, sizeof(line), f)) {
@@ -696,7 +697,7 @@ int main(int argc, char **argv)
         printf("Loaded %d (0x%04x) bytes.\n", n, n);
         avr_program_mega8(flash, n, 32, 1);
       } else {
-        printf("Unknown operation %s\n", argv[4]);
+        printf("Unknown operation %s\n", cmd);
       }
     }
   }
