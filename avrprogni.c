@@ -267,6 +267,35 @@ int avr_programming_enable()
   return 0;
 }
 
+void avr_verify_program_memory(unsigned char *flash, int low_addr, int m)
+{
+  unsigned int addr;
+  unsigned short x,y;
+  unsigned char ck;
+  unsigned int errors = 0;
+  int j;
+
+  for(addr = low_addr; addr < low_addr + m; ) {
+    ck = (addr >> 8) + (addr & 0xff) + 0x10;
+    for(j = 0; j < 8; j++) {
+      x = avr_talk(0x20, (addr >> 9),(addr >> 1) & 0xff,0x00) & 0xff;
+      addr ++;
+      y = avr_talk(0x28, (addr >> 9),(addr >> 1) & 0xff,0x00) & 0xff;
+      addr ++;
+      if(x != flash[addr - 2] || y != flash[addr - 1])
+      {
+        printf("ERROR at 0x%04x: %02X%02X in flash, %02X%02X in file", addr, x, y, flash[addr - 2], flash[addr - 1]);
+        errors ++;
+      }
+      ck += x + y;
+    }
+  }
+  if(!errors) printf("No errors.\n");
+  else
+  {
+    printf("ERRORS: Erroneous word count is %u\n", errors);
+  }
+}
 void avr_dump_program_memory(int low_addr, int m)
 {
   unsigned int addr;
@@ -680,6 +709,14 @@ int main(int argc, char **argv)
         avr_write_fuse_bits(f_hi, f_lo);
       } else if(!strcmp(cmd,"dump")) {
         avr_dump_program_memory(0,8192);
+      } else if(!strcmp(cmd,"verify")) {
+        fn = argv[2];
+        n = intelhex_load(fn, flash, sizeof(flash));
+        if(n < 0) {
+          exit(EXIT_FAILURE);
+        }
+        printf("Loaded %d (0x%04x) bytes.\n", n, n);
+        avr_verify_program_memory(flash,0,8192);
       } else if(!strcmp(cmd,"1200program")) {
         fn = argv[2];
         n = intelhex_load(fn, flash, sizeof(flash));
