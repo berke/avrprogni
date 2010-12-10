@@ -204,6 +204,8 @@ void prototran(int tau, unsigned long x)
 
 void avr_powerup(void) /* with XTAL */
 {
+  printf("Powering up.\n");
+
   /* Apply power while _RESET and SCK are set to 0. */
   (void) avr_rxtx(0);
   udelay(100);
@@ -407,6 +409,7 @@ unsigned short avr_read_fuse_bits(FILE *out)
 
 void avr_chip_erase()
 {
+  printf("Erasing...\n");
   (void) avr_talk(0xac,0x80,0x00,0x00);
   udelay(2000000); /* 20ms delay */
 }
@@ -430,8 +433,18 @@ void avr_program1200(unsigned char *flash, int length, int verify) /* must have 
   return;
 }
 
+enum
+{
+  AVR_LXAB    = 0x4d,
+  AVR_LPMP_LO = 0x40,
+  AVR_LPMP_HI = 0x48,
+  AVR_WPMP    = 0x4c,
+  AVR_RPMP_LO = 0x20,
+  AVR_RPMP_HI = 0x28,
+};
+
 /* program length is in BYTES */
-int avr_program_mega8(unsigned char *flash, int length, int page_size, int verify) /* must have been powered-up */
+int avr_program_mega(unsigned char *flash, int length, int page_size, int flash_size, int verify) /* must have been powered-up */
 {
   int i, j;
   int pages;
@@ -447,6 +460,8 @@ int avr_program_mega8(unsigned char *flash, int length, int page_size, int verif
   length = (length + 1) / 2; /* length in words */
   pages = (length + page_size - 1) / page_size;
   printf("Code length is %d (0x%x) words(s), %d page(s) of %d words.\n", length, length, pages, page_size);
+
+  avr_talk(AVR_LXAB, 0x00, 0x00, 0x00);
 
   for(j = 0; j < pages; j ++) {
     this_length = page_size;
@@ -467,12 +482,12 @@ int avr_program_mega8(unsigned char *flash, int length, int page_size, int verif
       x = flash[byte_index];
       printf("%02x", x);
       if(x != 0xff) not_ff = byte_index;
-      (void) avr_talk(0x40, 0x00, i, x);
+      (void) avr_talk(AVR_LPMP_LO, 0x00, i, x);
 
       x = flash[byte_index + 1];
       printf("%02x", x);
       if(x != 0xff) not_ff = byte_index + 1;
-      (void) avr_talk(0x48, 0x00, i, x);
+      (void) avr_talk(AVR_LPMP_HI, 0x00, i, x);
     }
     printf("\n");
 
@@ -480,21 +495,20 @@ int avr_program_mega8(unsigned char *flash, int length, int page_size, int verif
       printf("\nSkipping page %d (all-FF).\n", j);
       continue;
     }
-
     /* write page */
     printf("\nWriting page %d.\n", j);
-    (void) avr_talk(0x4c, j >> 3, (j & 7) << 5, 0x00);
+    (void) avr_talk(AVR_WPMP, (j * page_size) >> 8, (j * page_size) & 0xff, 0x00);
 
     /* poll */
     for(tries = 0; tries < 10000; tries ++)
     {
-      udelay(10);
       if(not_ff & 1)
-        x1 = avr_talk(0x28, 0xff & (not_ff >> 9), (not_ff >> 1) & 0xff, 0x00);
+        x1 = avr_talk(AVR_RPMP_HI, 0xff & (not_ff >> 9), (not_ff >> 1) & 0xff, 0x00);
       else
-        x1 = avr_talk(0x20, 0xff & (not_ff >> 9), (not_ff >> 1) & 0xff, 0x00);
+        x1 = avr_talk(AVR_RPMP_LO, 0xff & (not_ff >> 9), (not_ff >> 1) & 0xff, 0x00);
 
       if(flash[not_ff] == x1) break;
+      udelay(10);
     }
     if(tries == 10000)
     {
@@ -510,7 +524,7 @@ int avr_program_mega8(unsigned char *flash, int length, int page_size, int verif
       for(i = 0; i < this_length; i ++) {
         byte_index = 2 * (page_size * j + i);
         x1 = flash[byte_index];
-        x2 = avr_talk(0x20, 0xff & (byte_index >> 9), (byte_index >> 1) & 0xff, 0x00);
+        x2 = avr_talk(AVR_RPMP_LO, 0xff & (byte_index >> 9), (byte_index >> 1) & 0xff, 0x00);
 
         if(x1 != x2) {
           printf("ERROR: At index %d byte 0x%02x reads back as 0x%02x.\n", byte_index, x1, x2);
@@ -518,7 +532,7 @@ int avr_program_mega8(unsigned char *flash, int length, int page_size, int verif
         }
         byte_index ++;
         y1 = flash[byte_index];
-        y2 = avr_talk(0x28, 0xff & (byte_index >> 9), (byte_index >> 1) & 0xff, 0x00);
+        y2 = avr_talk(AVR_RPMP_HI, 0xff & (byte_index >> 9), (byte_index >> 1) & 0xff, 0x00);
         if(y1 != y2) {
           printf("ERROR: At index %d byte 0x%02x reads back as 0x%02x.\n", byte_index, y1, y2);
           return 0;
@@ -612,7 +626,7 @@ bye:
 
 unsigned char avr_read_signature(int i)
 {
-  return avr_talk(0x03,0x00,i & 3,0x00);
+  return avr_talk(0x30,0x00,i & 3,0x00);
 }
 
 void avr_dump_signature(FILE *f)
@@ -630,6 +644,20 @@ int main(int argc, char **argv)
   char *fn, *cmd;
   static unsigned char flash[8192];
   int n;
+
+  char *next_arg(void)
+  {
+    if(argc > 0)
+    {
+      argc --;
+      return *(argv ++);
+    }
+    else
+    {
+      fprintf(stderr, "Missing argument");
+      exit(EXIT_FAILURE);
+    }
+  }
 
   memset(flash, 0xff, sizeof(flash));
 
@@ -661,15 +689,14 @@ int main(int argc, char **argv)
 
   while(argc > 0)
   {
-    cmd = *(argv ++);
-    argc --;
+    cmd = next_arg();
 
     if(!strcmp(cmd,"prototran")) {
       int tau;
       unsigned long x;
 
-      tau = atoi(*(argv ++));
-      if (1 == sscanf(*(argv ++),"%li",&x)) {
+      tau = atoi(next_arg());
+      if (1 == sscanf(next_arg(), "%li",&x)) {
         prototran(tau,x);
       } else {
         fprintf(stderr, "Bad integer.\n");
@@ -678,17 +705,17 @@ int main(int argc, char **argv)
     } else if(!strcmp(cmd,"powerup")) {
       tx(AVR_RST);
     } else if(!strcmp(cmd,"set")) {
-      tx(atoi(*(argv ++)));
+      tx(atoi(next_arg()));
     } else if(!strcmp(cmd,"monitor")) {
       monitor();
     } else if(!strcmp(cmd,"capture")) {
-      capture(*(argv ++));
+      capture(next_arg());
     } else if(!strcmp(cmd,"reset")) {
       tx(0);
       udelay(1000000);
       tx(AVR_RST);
     } else if(!strcmp(cmd,"ihexchk")) {
-      fn = *(argv ++);
+      fn = next_arg();
       n = intelhex_load(fn, flash, sizeof(flash));
       printf("Loaded %d (0x%04x) bytes.\n", n, n);
     } else if(!strcmp(cmd, "slow")) {
@@ -713,7 +740,7 @@ int main(int argc, char **argv)
             fprintf(stderr,"usage: avrprogni writelock <lock>\n");
             exit(1);
           }
-          avr_write_lock_bits(stdout, strtol(*(argv ++), 0, 0));
+          avr_write_lock_bits(stdout, strtol(next_arg(), 0, 0));
         } else if(!strcmp(cmd,"writefuse")) {
           unsigned char f_hi;
           unsigned char f_lo;
@@ -721,13 +748,13 @@ int main(int argc, char **argv)
             fprintf(stderr,"usage: avrprogni writefuse <fuse_hi> <fuse_lo>\n");
             exit(1);
           }
-          f_hi = strtol(*(argv ++), 0, 0);
-          f_lo = strtol(*(argv ++), 0, 0);
+          f_hi = strtol(next_arg(), 0, 0);
+          f_lo = strtol(next_arg(), 0, 0);
           avr_write_fuse_bits(f_hi, f_lo);
         } else if(!strcmp(cmd,"dump")) {
           avr_dump_program_memory(0,8192);
         } else if(!strcmp(cmd,"verify")) {
-          fn = *(argv ++);
+          fn = next_arg();
           n = intelhex_load(fn, flash, sizeof(flash));
           if(n < 0) {
             exit(EXIT_FAILURE);
@@ -735,7 +762,7 @@ int main(int argc, char **argv)
           printf("Loaded %d (0x%04x) bytes.\n", n, n);
           avr_verify_program_memory(flash,0,8192);
         } else if(!strcmp(cmd,"1200program")) {
-          fn = *(argv ++);
+          fn = next_arg();
           n = intelhex_load(fn, flash, sizeof(flash));
           if(n < 0) {
             exit(EXIT_FAILURE);
@@ -743,13 +770,51 @@ int main(int argc, char **argv)
           printf("Loaded %d bytes.\n", n);
           avr_program1200(flash, n, 1);
         } else if(!strcmp(cmd,"megaprogram")) {
-          fn = *(argv ++);
+          unsigned char flash_code;
+          unsigned int flash_size, page_size;
+
+          fn = next_arg();
           n = intelhex_load(fn, flash, sizeof(flash));
           if(n < 0) {
             exit(EXIT_FAILURE);
           }
           printf("Loaded %d (0x%04x) bytes.\n", n, n);
-          avr_program_mega8(flash, n, 32, 1);
+          
+          /* Determine flash size */
+          flash_code = avr_read_signature(0x01);
+          switch(flash_code)
+          {
+            case 0x92:
+              flash_size = 4096;
+              page_size = 32;
+              break;
+            case 0x93:
+              flash_size = 8192;
+              page_size = 32;
+              break;
+            case 0x94:
+              flash_size = 16384;
+              page_size = 64;
+              break;
+            case 0x95:
+              flash_size = 32768;
+              page_size = 64;
+              break;
+            case 0x96:
+              flash_size = 65536;
+              page_size = 128;
+              break;
+            default:
+              fprintf(stderr, "Unknown flash size code 0x%02x\n", flash_code);
+              exit(EXIT_FAILURE);
+          }
+          printf("Flash size is %d bytes (page size %d)\n", flash_size, page_size);
+          if(n > flash_size)
+          {
+            fprintf(stderr, "Error: Program size exceeds flash size\n");
+            exit(EXIT_FAILURE);
+          }
+          avr_program_mega(flash, n, page_size, flash_size, 1);
         } else {
           printf("Unknown operation %s\n", cmd);
         }
