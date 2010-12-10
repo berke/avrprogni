@@ -38,10 +38,13 @@ enum
 
 static comedi_t *dev;
 
+bool opt_slow = false;
+
 static inline void udelay(int t_us)
 {
   struct timespec ts;
 
+  if(opt_slow) t_us *= 10;
   ts.tv_sec = t_us / 1000000;
   ts.tv_nsec = (t_us % 1000000) * 1000;
   nanosleep(&ts, NULL);
@@ -130,7 +133,7 @@ unsigned char avr_rxtx(unsigned char x)
 {
   bool c;
   tx(x & 7);
-  //retard();
+  if(opt_slow) udelay(20);
   c = rx_miso();
   /* printf("T(0x%02x) R(%d)\n", x, c); */
   return c;
@@ -214,6 +217,11 @@ void avr_powerup(void) /* with XTAL */
   udelay(20000);
 }
 
+static inline void avr_delay(void)
+{
+  if(opt_slow) udelay(20);
+}
+
 unsigned short avr_byte(unsigned char x, unsigned char z, unsigned short res)
 {
   unsigned i;
@@ -221,14 +229,14 @@ unsigned short avr_byte(unsigned char x, unsigned char z, unsigned short res)
   for(i = 0; i<8; i++) {
     if(x & 0x80) {
       (void) avr_rxtx(AVR_MOSI);
-      //udelay(3);
+      avr_delay();
       z = avr_rxtx(AVR_MOSI|AVR_SCLK);
-      //udelay(3);
+      avr_delay();
     } else {
       (void) avr_rxtx(0);
-      //udelay(3);
+      avr_delay();
       z = avr_rxtx(AVR_SCLK);
-      //udelay(3);
+      avr_delay();
     }
     res <<= 1;
     if (z) res |= 1;
@@ -630,8 +638,6 @@ int main(int argc, char **argv)
     exit(EXIT_FAILURE);
   }
 
-  cmd = argv[1];
-
   dev = comedi_open("/dev/comedi0");
 
   for(n = AVR_FIRST_OUTPUT_BIT; n <= AVR_LAST_OUTPUT_BIT; n ++)
@@ -650,91 +656,103 @@ int main(int argc, char **argv)
     }
   }
 
-  if(!strcmp(cmd,"prototran")) {
-    int tau;
-    unsigned long x;
+  argc --;
+  argv ++;
 
-    tau = atoi(argv[2]);
-    if (1 == sscanf(argv[3],"%li",&x)) {
-      prototran(tau,x);
-    } else {
-      fprintf(stderr, "Bad integer.\n");
-      exit(EXIT_FAILURE);
-    }
-  } else if(!strcmp(cmd,"powerup")) {
-    tx(AVR_RST);
-  } else if(!strcmp(cmd,"set")) {
-    tx(atoi(argv[2]));
-  } else if(!strcmp(cmd,"monitor")) {
-    monitor();
-  } else if(!strcmp(cmd,"capture")) {
-    capture(argv[2]);
-  } else if(!strcmp(cmd,"reset")) {
-    tx(0);
-    udelay(1000000);
-    tx(AVR_RST);
-  } else if(!strcmp(cmd,"ihexchk")) {
-    fn = argv[2];
-    n = intelhex_load(fn, flash, sizeof(flash));
-    printf("Loaded %d (0x%04x) bytes.\n", n, n);
-  } else {
-    avr_powerup();
-    if(avr_programming_enable()) {
-      if(!strcmp(cmd,"erase")) {
-        avr_chip_erase();
-      } else if(!strcmp(cmd,"unlock")) {
-        avr_talk(0xac,0xff,0x00,0x00);
-      } else if(!strcmp(cmd,"signature")) {
-        avr_dump_signature(stdout);
-      } else if(!strcmp(cmd,"readfuse")) {
-        avr_read_fuse_bits(stdout);
-      } else if(!strcmp(cmd,"readlock")) {
-        avr_read_lock_bits(stdout);
-      } else if(!strcmp(cmd,"writelock")) {
-        if(argc != 3)
-        {
-          fprintf(stderr,"usage: avrprogni writelock <lock>\n");
-          exit(1);
-        }
-        avr_write_lock_bits(stdout, strtol(argv[2], 0, 0));
-      } else if(!strcmp(cmd,"writefuse")) {
-        unsigned char f_hi;
-        unsigned char f_lo;
-        if (argc != 4) {
-          fprintf(stderr,"usage: avrprogni writefuse <fuse_hi> <fuse_lo>\n");
-          exit(1);
-        }
-        f_hi = strtol(argv[2], 0, 0);
-        f_lo = strtol(argv[3], 0, 0);
-        avr_write_fuse_bits(f_hi, f_lo);
-      } else if(!strcmp(cmd,"dump")) {
-        avr_dump_program_memory(0,8192);
-      } else if(!strcmp(cmd,"verify")) {
-        fn = argv[2];
-        n = intelhex_load(fn, flash, sizeof(flash));
-        if(n < 0) {
-          exit(EXIT_FAILURE);
-        }
-        printf("Loaded %d (0x%04x) bytes.\n", n, n);
-        avr_verify_program_memory(flash,0,8192);
-      } else if(!strcmp(cmd,"1200program")) {
-        fn = argv[2];
-        n = intelhex_load(fn, flash, sizeof(flash));
-        if(n < 0) {
-          exit(EXIT_FAILURE);
-        }
-        printf("Loaded %d bytes.\n", n);
-        avr_program1200(flash, n, 1);
-      } else if(!strcmp(cmd,"megaprogram")) {
-        fn = argv[2];
-        n = intelhex_load(fn, flash, sizeof(flash));
-        if(n < 0) {
-          exit(EXIT_FAILURE);
-        }
-        printf("Loaded %d (0x%04x) bytes.\n", n, n);
-        avr_program_mega8(flash, n, 32, 1);
+  while(argc > 0)
+  {
+    cmd = *(argv ++);
+    argc --;
+
+    if(!strcmp(cmd,"prototran")) {
+      int tau;
+      unsigned long x;
+
+      tau = atoi(*(argv ++));
+      if (1 == sscanf(*(argv ++),"%li",&x)) {
+        prototran(tau,x);
       } else {
-        printf("Unknown operation %s\n", cmd);
+        fprintf(stderr, "Bad integer.\n");
+        exit(EXIT_FAILURE);
+      }
+    } else if(!strcmp(cmd,"powerup")) {
+      tx(AVR_RST);
+    } else if(!strcmp(cmd,"set")) {
+      tx(atoi(*(argv ++)));
+    } else if(!strcmp(cmd,"monitor")) {
+      monitor();
+    } else if(!strcmp(cmd,"capture")) {
+      capture(*(argv ++));
+    } else if(!strcmp(cmd,"reset")) {
+      tx(0);
+      udelay(1000000);
+      tx(AVR_RST);
+    } else if(!strcmp(cmd,"ihexchk")) {
+      fn = *(argv ++);
+      n = intelhex_load(fn, flash, sizeof(flash));
+      printf("Loaded %d (0x%04x) bytes.\n", n, n);
+    } else if(!strcmp(cmd, "slow")) {
+      opt_slow = true;
+      printf("Using SLOW mode.\n");
+    } else {
+      avr_powerup();
+      if(avr_programming_enable()) {
+        if(!strcmp(cmd,"erase")) {
+          avr_chip_erase();
+        } else if(!strcmp(cmd,"unlock")) {
+          avr_talk(0xac,0xff,0x00,0x00);
+        } else if(!strcmp(cmd,"signature")) {
+          avr_dump_signature(stdout);
+        } else if(!strcmp(cmd,"readfuse")) {
+          avr_read_fuse_bits(stdout);
+        } else if(!strcmp(cmd,"readlock")) {
+          avr_read_lock_bits(stdout);
+        } else if(!strcmp(cmd,"writelock")) {
+          if(argc != 3)
+          {
+            fprintf(stderr,"usage: avrprogni writelock <lock>\n");
+            exit(1);
+          }
+          avr_write_lock_bits(stdout, strtol(*(argv ++), 0, 0));
+        } else if(!strcmp(cmd,"writefuse")) {
+          unsigned char f_hi;
+          unsigned char f_lo;
+          if (argc != 4) {
+            fprintf(stderr,"usage: avrprogni writefuse <fuse_hi> <fuse_lo>\n");
+            exit(1);
+          }
+          f_hi = strtol(*(argv ++), 0, 0);
+          f_lo = strtol(*(argv ++), 0, 0);
+          avr_write_fuse_bits(f_hi, f_lo);
+        } else if(!strcmp(cmd,"dump")) {
+          avr_dump_program_memory(0,8192);
+        } else if(!strcmp(cmd,"verify")) {
+          fn = *(argv ++);
+          n = intelhex_load(fn, flash, sizeof(flash));
+          if(n < 0) {
+            exit(EXIT_FAILURE);
+          }
+          printf("Loaded %d (0x%04x) bytes.\n", n, n);
+          avr_verify_program_memory(flash,0,8192);
+        } else if(!strcmp(cmd,"1200program")) {
+          fn = *(argv ++);
+          n = intelhex_load(fn, flash, sizeof(flash));
+          if(n < 0) {
+            exit(EXIT_FAILURE);
+          }
+          printf("Loaded %d bytes.\n", n);
+          avr_program1200(flash, n, 1);
+        } else if(!strcmp(cmd,"megaprogram")) {
+          fn = *(argv ++);
+          n = intelhex_load(fn, flash, sizeof(flash));
+          if(n < 0) {
+            exit(EXIT_FAILURE);
+          }
+          printf("Loaded %d (0x%04x) bytes.\n", n, n);
+          avr_program_mega8(flash, n, 32, 1);
+        } else {
+          printf("Unknown operation %s\n", cmd);
+        }
       }
     }
   }
